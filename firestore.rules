@@ -1,0 +1,54 @@
+rules_version = '2';
+
+// Modelo de dados assumido:
+// /portfolioStates/{userId}
+//   stateJson: string obrigatória, até 900.000 bytes; contém o estado financeiro
+//   privado de um único perfil. O UID Firebase no ID do documento é imutável.
+//   O cliente usa somente leitura por ID de documento e criação/atualização.
+//   Não há listagem da coleção nem exclusão pelo app.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // O modelo não armazena UID em campos: a identidade fica no caminho.
+    function uidUnchanged() {
+      return !request.resource.data.keys().hasAny(['uid']);
+    }
+
+    function uidNotModified() {
+      return !request.resource.data.keys().hasAny(['uid'])
+        && !resource.data.keys().hasAny(['uid']);
+    }
+
+    // Validação reaplicada em toda criação e atualização.
+    function isValidPortfolioState() {
+      return request.resource.data.keys().hasAll(['stateJson'])
+        && request.resource.data.keys().hasOnly(['stateJson'])
+        && request.resource.data.stateJson is string
+        && request.resource.data.stateJson.size() <= 900000;
+    }
+
+    match /portfolioStates/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isOwner(userId)
+        && uidUnchanged()
+        && isValidPortfolioState();
+      allow update: if isOwner(userId)
+        && uidNotModified()
+        && isValidPortfolioState();
+      allow delete: if false;
+    }
+
+    // Negação padrão para todas as demais coleções e subcoleções.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

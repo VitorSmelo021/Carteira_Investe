@@ -1,0 +1,19 @@
+# Local portfolio data and credentials must never enter the source repository.
+data/
+.env
+.env.*
+!.env.example
+
+# User supplied backups, imports, and captures.
+backup_*.json
+backup_*.csv
+historico*.json
+importacoes/
+prompt_codex_diversificacao_carteira.md
+firestore.rules.audit.md
+
+# Local development artifacts.
+node_modules/
+npm-debug.log*
+*.log
+*.tmp

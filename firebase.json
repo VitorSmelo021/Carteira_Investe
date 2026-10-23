@@ -1,0 +1,40 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "firestore.rules",
+      "firestore.rules.audit.md",
+      "server.js",
+      "core.test.js",
+      "package.json",
+      "README.md",
+      "DEPLOY.md",
+      "LEIA_PRIMEIRO.md",
+      "**/.*",
+      "**/node_modules/**",
+      "data/**",
+      "importacoes/**",
+      "backup_*.json",
+      "backup_*.csv",
+      "historico*.json",
+      "prompt_codex_diversificacao_carteira.md",
+      "*.log",
+      "*.tmp"
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          { "key": "X-Content-Type-Options", "value": "nosniff" },
+          { "key": "Referrer-Policy", "value": "no-referrer" },
+          { "key": "X-Frame-Options", "value": "DENY" },
+          { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com; form-action 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const core=require('./core.js');
+const history=JSON.parse(fs.readFileSync('C:/Users/vitor/Downloads/historico_carteira_investimentos_codex.json','utf8'));
+const marketCapture=JSON.parse(fs.readFileSync('./importacoes/registro-investidor10-2026-10-18.json','utf8'));
+
+test('importação idempotente preserva quantidade e null como ausente',()=>{const row={ticker:'BBSE3',quantity:5,average_cost_brl:null,current_price_brl:null};const once=core.importPositions([], [row]);const twice=core.importPositions(once,[row]);assert.equal(twice.length,1);assert.equal(twice[0].quantity,5);assert.equal(twice[0].average_cost_brl,null);assert.equal(twice[0].current_price_brl,null)});
+test('valor de mercado não converte ausência em zero',()=>{assert.equal(core.marketValue(2,null),null);assert.equal(core.marketValue(2,10),20)});
+test('variação percentual lida com base ausente ou zero',()=>{assert.equal(core.percentageChange(110,100),10);assert.equal(core.percentageChange(100,0),null);assert.equal(core.percentageChange(100,null),null)});
+test('orçamento soma base, proventos elegíveis e sobra sem duplicar previsão',()=>{assert.equal(core.budget(750,19.04,3.73),772.77);assert.equal(core.budget(750),750)});
+test('sobra é calculada a partir do orçamento e das compras confirmadas no plano',()=>{assert.ok(Math.abs(core.finalSurplus(772.77,770.3)-2.47)<1e-9);assert.equal(core.finalSurplus(1000,1200),0);assert.equal(core.finalSurplus(1000,null),null)});
+test('snapshots de fim de semana são detectados',()=>{assert.equal(core.isWeekend('2026-10-18'),true);assert.equal(core.isWeekend('2026-10-19'),false)});
+test('histórico completo preserva status e aplica compras confirmadas uma vez',()=>{
+  const before=history.holdings['before_2026-10-02'];
+  const after=history.holdings['after_2026-10-02'];
+  const assets=Object.entries(before).flatMap(([group,rows])=>Object.entries(rows).map(([ticker,quantity])=>({id:'asset-'+ticker,ticker,quantity,asset_class:group})));
+  const initial={assets,transactions:[],snapshots:[],fixedIncome:[{label:'Caixinha Nubank (referência informada como 120% do CDI)',reported_balance_brl:2858.84,reference_date:'2026-09-21',status:'historical_requires_user_confirmation'},{label:'Tesouro Direto / Tesouro Selic 2031',reported_balance_brl:1187.46,reference_date:'2026-09-21',status:'historical_requires_user_confirmation'}],dividends:[{id:'ref-2026-09-old',competence:'2026-09',forecast:16.51,received:null,status:'historical_user_reported_forecast'},{id:'ref-2026-10-old',competence:'2026-10',forecast:6.7,received:.02,status:'historical_user_reported_forecast_and_receipt'}],plans:[],pendingPlan:{planned_purchases:[{ticker:'IVVB11',quantity:1}]},settings:{monthlyBase:750}};
+  const first=core.importInvestmentHistory(history,initial);
+  for(const [ticker,expected] of Object.entries(after.etfs))assert.equal(first.state.assets.find(a=>a.ticker===ticker).quantity,expected);
+  for(const [ticker,expected] of Object.entries(after.fiis))assert.equal(first.state.assets.find(a=>a.ticker===ticker).quantity,expected);
+  assert.equal(first.state.transactions.length,4);
+  assert.equal(first.state.snapshots.length,history.patrimonio_history.length);
+  assert.equal(first.state.positionHistory.length,22);
+  assert.equal(first.report.historicalPositions.imported,22);assert.equal(first.report.rules.imported,1);
+  assert.equal(first.report.importedTotal,72);assert.equal(first.report.duplicatesTotal,4);
+  assert.ok(first.state.snapshots.some(s=>s.status==='raw_weekend_app_observation'&&s.total===6702.05&&s.chartValue===6708.08));
+  assert.ok(first.state.snapshots.some(s=>s.status==='weekend_neutral_chart_point'));
+  assert.equal(first.state.fixedIncome.length,4);assert.equal(first.report.fixedIncome.duplicates,2);
+  assert.ok(first.state.fixedIncome.some(x=>x.amount_brl===1185.45&&x.validationStatus==='historical_requires_confirmation'));
+  assert.equal(first.state.dividends.length,7);assert.equal(first.report.dividends.duplicates,2);
+  assert.equal(first.state.dividends.find(x=>x.competence==='2026-10'&&x.received===.02).ticker,'ITSA4');
+  assert.equal(first.state.plans.find(p=>p.month==='2026-10').surplusFinal,null);assert.equal(first.state.pendingPlan,null);
+  const second=core.importInvestmentHistory(history,first.state);
+  assert.equal(second.report.transactions.imported,0);assert.equal(second.report.transactions.duplicates,4);
+  assert.equal(second.report.snapshots.imported,0);assert.equal(second.report.snapshots.duplicates,history.patrimonio_history.length);
+  assert.equal(second.report.historicalPositions.imported,0);assert.equal(second.report.historicalPositions.duplicates,22);assert.equal(second.report.rules.duplicates,1);
+  assert.equal(second.report.dividends.imported,0);assert.equal(second.report.dividends.duplicates,7);
+  assert.equal(second.state.dividends.length,7);assert.equal(second.state.dividends.filter(x=>x.ticker==='ITSA4'&&x.competence==='2026-10'&&x.received===.02).length,1);
+  assert.equal(second.report.duplicatesTotal,72);assert.ok(second.report.confirmations.some(x=>x.includes('2026-09-26')));assert.ok(second.report.observations.some(x=>x.includes('2026-10-03')));
+  assert.equal(second.state.transactions.length,4);assert.equal(second.state.assets.find(a=>a.ticker==='IVVB11').quantity,2);
+});
+
+test('captura diária registra cotações sem alterar posições, recebimentos ou históricos anteriores',()=>{
+  const initial={assets:marketCapture.positions.filter(p=>p.asset_class!=='treasury_direct').map(p=>({id:`asset-${p.ticker}`,ticker:p.ticker,quantity:p.quantity,average_cost_brl:null,quote:null})),quotes:[],snapshots:[{id:'older',date:'2026-10-17',total:6500}],dividends:[{id:'existing-dividend',ticker:'MXRF11',competence:'2026-10',received:5,status:'forecast'}],fixedIncome:[{id:'old-fixed',label:'CDB Nubank',reported_balance_brl:2800,reference_date:'2026-09-21'}],fixedIncomeObservations:[],dailyMarketSnapshots:[],marketCaptureReports:[],sourceLogs:[]};
+  const first=core.importMarketCapture(marketCapture,initial);
+  assert.equal(first.report.positions.imported,12);assert.equal(first.report.positions.createdAssets,1);assert.equal(first.state.assets.length,12);assert.equal(first.state.quotes.length,12);assert.equal(first.state.dailyMarketSnapshots.length,1);
+  assert.equal(first.state.snapshots.length,1);assert.equal(first.state.fixedIncome.length,1);assert.equal(first.state.fixedIncomeObservations.length,1);assert.equal(first.state.dividends.length,1);
+  assert.equal(first.state.assets.find(a=>a.ticker==='BTCI11').quantity,23);assert.equal(first.state.assets.find(a=>a.ticker==='IVVB11').quote.price,439);assert.equal(first.state.assets.find(a=>a.ticker==='IVVB11').average_cost_brl,450.53);
+  assert.equal(first.state.assets.find(a=>a.ticker==='IVVB11').quote.status,'user_reported_screenshot');assert.equal(first.state.fixedIncomeObservations[0].status,'user_reported_screenshot_requires_confirmation');
+  assert.equal(first.report.inconsistencies.length,2);assert.ok(first.report.inconsistencies.some(x=>x.includes('1.73')));assert.ok(first.report.inconsistencies.some(x=>x.includes('0.90')));
+  const second=core.importMarketCapture(marketCapture,first.state);assert.equal(second.report.positions.imported,0);assert.equal(second.report.positions.createdAssets,0);assert.equal(second.report.positions.duplicates,12);assert.equal(second.state.assets.length,12);assert.equal(second.state.quotes.length,12);assert.equal(second.state.dailyMarketSnapshots.length,1);assert.equal(second.state.marketCaptureReports.length,2);assert.equal(second.state.dailyMarketSnapshots[0].report.conflicts.length,0);
+});
